@@ -1,0 +1,29 @@
+import pandas as pd
+import numpy as np
+from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+
+data = pd.read_csv('reviews_sentiments.csv')
+
+cv = CountVectorizer()
+cv_ft = cv.fit_transform(data.review_text)
+sum_all = np.sum(cv.fit_transform(data.review_text).toarray(), axis = 0)
+all_tuples = list(zip(sum_all, cv.get_feature_names(), range(sum_all.shape[0])))
+freq_df = pd.DataFrame.from_records(all_tuples,columns = ['freq','word','word_id'],index = 'word_id')
+freq_df = freq_df.sort_values(by = 'freq',ascending=False).reset_index()
+print(freq_df.head())
+
+cv = CountVectorizer(stop_words='english',max_features=250)
+cv_ft = cv.fit_transform(data.review_text)
+sum_all = np.sum(cv.fit_transform(data.review_text).toarray(), axis = 0)
+all_tuples = list(zip(sum_all, cv.get_feature_names(), range(sum_all.shape[0])))
+freq_df = pd.DataFrame.from_records(all_tuples,columns = ['freq','word','word_id'],index = 'word_id')
+freq_df = freq_df.sort_values(by = 'freq',ascending=False).reset_index()
+print(freq_df.head())
+
+cv = CountVectorizer(stop_words = 'english', max_features=250)
+cv_ft = cv.fit_transform(data.review_text)
+lda = LinearDiscriminantAnalysis()
+lda.fit(cv_ft.toarray(), data.sentiment)
+coef_df = pd.DataFrame({'word':cv.get_feature_names(),'coef':lda.coef_[0]}).sort_values(by='coef',ascending=False).reset_index(drop=True)
+print(coef_df.head())
