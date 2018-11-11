@@ -1,0 +1,214 @@
+trying to predict the sentiment of the comments recorded with people into 5 classes. The idea is to use Doc2Vec to improve the accuracy of the system.
+
+Loading data into pandas dataframe
+We have loaded data from csv into pandas dataframe , have dropped non useful columns from the dataframe and have only kept "Text" and "Score" which is useful to us.
+
+# Input data files are available in the "../input/" directory.
+# For example, running this (by clicking run or pressing Shift+Enter) will list the files in the input directory
+
+# from subprocess import check_output
+# print(check_output(["ls", "../input"]).decode("utf8"))
+
+import pandas as pd
+import numpy as np
+
+np.random.seed(0)
+
+def read_text_file(f):
+    df_complete = pd.read_csv(f)
+    df = df_complete.loc[:,["Text","Score"]]
+    df.dropna(how="any", inplace=True)    
+    return df
+
+df = read_text_file("../input/Reviews.csv")
+print (df.head())
+                                                Text  Score
+0  I have bought several of the Vitality canned d...      5
+1  Product arrived labeled as Jumbo Salted Peanut...      1
+2  This is a confection that has been around a fe...      4
+3  If you are looking for the secret ingredient i...      2
+4  Great taffy at a great price.  There was a wid...      5
+Sampling Data
+Sampling dataset to bring each of the classes into same frequency
+
+def sampling_dataset(df):
+    count = 5000
+    class_df_sampled = pd.DataFrame(columns = ["Score","Text"])
+    temp = []
+    for c in df.Score.unique():
+        class_indexes = df[df.Score == c].index
+        random_indexes = np.random.choice(class_indexes, count, replace=False)
+        temp.append(df.loc[random_indexes])
+        
+    for each_df in temp:
+        class_df_sampled = pd.concat([class_df_sampled,each_df],axis=0)
+    
+    return class_df_sampled
+
+df = sampling_dataset(df)
+df.reset_index(drop=True,inplace=True)
+print (df.head())
+print (df.shape)
+   Score                                               Text
+0    5.0  ...at least I hope it remains available. It is...
+1    5.0  My grandson is a beef jerky addict. We don't h...
+2    5.0  This coffee has a really great taste asnd if v...
+3    5.0  Healthy edibles are a great treat for our 5 ye...
+4    5.0  I have never been one to buy chicken in a can ...
+(25000, 2)
+Train Dov2Vec
+Train Doc2Vec considering each comment as a document. We have taken out words from the comments and then created a LabelSentence object to train Doc2Vec on a size of 300 and variable learning rate sequentially decreasing.
+
+from gensim.models.doc2vec import LabeledSentence
+from gensim.models import Doc2Vec
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize, sent_tokenize
+from nltk.stem.wordnet import WordNetLemmatizer
+import re
+
+lmtzr = WordNetLemmatizer()
+w = re.compile("\w+",re.I)
+
+def label_sentences(df):
+    labeled_sentences = []
+    for index, datapoint in df.iterrows():
+        tokenized_words = re.findall(w,datapoint["Text"].lower())
+        labeled_sentences.append(LabeledSentence(words=tokenized_words, tags=['SENT_%s' %index]))
+    return labeled_sentences
+
+def train_doc2vec_model(labeled_sentences):
+    model = Doc2Vec(alpha=0.025, min_alpha=0.025)
+    model.build_vocab(labeled_sentences)
+    for epoch in range(10):
+        model.train(labeled_sentences)
+        model.alpha -= 0.002 
+        model.min_alpha = model.alpha
+    
+    return model
+
+sen = label_sentences(df)
+model = train_doc2vec_model(sen)
+Vectorize Comment
+Vectorize comments using doc2vec trained model
+
+def vectorize_comments(df,d2v_model):
+    y = []
+    comments = []
+    for i in range(0,df.shape[0]):
+        label = 'SENT_%s' %i
+        comments.append(d2v_model.docvecs[label])
+    df['vectorized_comments'] = comments
+    
+    return df
+
+df = vectorize_comments(df,model)
+print (df.head(2))
+   Score                                               Text  \
+0    5.0  ...at least I hope it remains available. It is...   
+1    5.0  My grandson is a beef jerky addict. We don't h...   
+
+                                 vectorized_comments  
+0  [0.282367, -0.148792, -0.109559, 0.0582213, 0....  
+1  [-0.0359735, 0.00815809, -0.191605, -0.13812, ...  
+#print (model)
+#print (model.docvecs['SENT_0'])
+#print (model.docvecs.most_similar('SENT_0'))
+#print (df.ix[0]['Text'])
+#print ("-----------------------------------------------------")
+#print (df.ix[366]['Text'])
+#print (model.most_similar(SENT_0))
+Train Random forest classifier on a grid search parameters
+Training RFC classifier with grid search to tune hyperparameters . Score on test data and highest CV score printed.
+
+from sklearn import cross_validation
+from sklearn.grid_search import GridSearchCV
+from sklearn.ensemble import RandomForestClassifier as RFC
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+import pickle
+
+def train_classifier(X,y):
+    n_estimators = [200,400]
+    min_samples_split = [2]
+    min_samples_leaf = [1]
+    bootstrap = [True]
+
+    parameters = {'n_estimators': n_estimators, 'min_samples_leaf': min_samples_leaf,
+                  'min_samples_split': min_samples_split}
+
+    clf = GridSearchCV(RFC(verbose=1,n_jobs=4), cv=4, param_grid=parameters)
+    clf.fit(X, y)
+    return clf
+
+X_train, X_test, y_train, y_test = cross_validation.train_test_split(df["vectorized_comments"].T.tolist(), df["Score"], test_size=0.02, random_state=17)
+classifier = train_classifier(X_train,y_train)
+print (classifier.best_score_, "----------------Best Accuracy score on Cross Validation Sets")
+print (classifier.score(X_test,y_test))
+/opt/conda/lib/python3.5/site-packages/sklearn/cross_validation.py:44: DeprecationWarning: This module was deprecated in version 0.18 in favor of the model_selection module into which all the refactored classes and functions are moved. Also note that the interface of the new CV iterators are different from that of this module. This module will be removed in 0.20.
+  "This module will be removed in 0.20.", DeprecationWarning)
+/opt/conda/lib/python3.5/site-packages/sklearn/grid_search.py:43: DeprecationWarning: This module was deprecated in version 0.18 in favor of the model_selection module into which all the refactored classes and functions are moved. This module will be removed in 0.20.
+  DeprecationWarning)
+[Parallel(n_jobs=4)]: Done  42 tasks      | elapsed:    3.8s
+[Parallel(n_jobs=4)]: Done 192 tasks      | elapsed:   16.1s
+[Parallel(n_jobs=4)]: Done 200 out of 200 | elapsed:   16.8s finished
+[Parallel(n_jobs=4)]: Done  42 tasks      | elapsed:    0.1s
+[Parallel(n_jobs=4)]: Done 192 tasks      | elapsed:    0.3s
+[Parallel(n_jobs=4)]: Done 200 out of 200 | elapsed:    0.3s finished
+[Parallel(n_jobs=4)]: Done  42 tasks      | elapsed:    3.7s
+[Parallel(n_jobs=4)]: Done 192 tasks      | elapsed:   16.4s
+[Parallel(n_jobs=4)]: Done 200 out of 200 | elapsed:   17.0s finished
+[Parallel(n_jobs=4)]: Done  42 tasks      | elapsed:    0.0s
+[Parallel(n_jobs=4)]: Done 192 tasks      | elapsed:    0.2s
+[Parallel(n_jobs=4)]: Done 200 out of 200 | elapsed:    0.2s finished
+[Parallel(n_jobs=4)]: Done  42 tasks      | elapsed:    3.6s
+[Parallel(n_jobs=4)]: Done 192 tasks      | elapsed:   15.6s
+[Parallel(n_jobs=4)]: Done 200 out of 200 | elapsed:   16.2s finished
+[Parallel(n_jobs=4)]: Done  42 tasks      | elapsed:    0.1s
+[Parallel(n_jobs=4)]: Done 192 tasks      | elapsed:    0.2s
+[Parallel(n_jobs=4)]: Done 200 out of 200 | elapsed:    0.2s finished
+[Parallel(n_jobs=4)]: Done  42 tasks      | elapsed:    3.6s
+[Parallel(n_jobs=4)]: Done 192 tasks      | elapsed:   15.9s
+[Parallel(n_jobs=4)]: Done 200 out of 200 | elapsed:   16.5s finished
+[Parallel(n_jobs=4)]: Done  42 tasks      | elapsed:    0.1s
+[Parallel(n_jobs=4)]: Done 192 tasks      | elapsed:    0.3s
+[Parallel(n_jobs=4)]: Done 200 out of 200 | elapsed:    0.3s finished
+[Parallel(n_jobs=4)]: Done  42 tasks      | elapsed:    3.8s
+[Parallel(n_jobs=4)]: Done 192 tasks      | elapsed:   16.2s
+[Parallel(n_jobs=4)]: Done 400 out of 400 | elapsed:   33.4s finished
+[Parallel(n_jobs=4)]: Done  42 tasks      | elapsed:    0.1s
+[Parallel(n_jobs=4)]: Done 192 tasks      | elapsed:    0.3s
+[Parallel(n_jobs=4)]: Done 400 out of 400 | elapsed:    0.6s finished
+[Parallel(n_jobs=4)]: Done  42 tasks      | elapsed:    3.7s
+[Parallel(n_jobs=4)]: Done 192 tasks      | elapsed:   16.0s
+[Parallel(n_jobs=4)]: Done 400 out of 400 | elapsed:   33.8s finished
+[Parallel(n_jobs=4)]: Done  42 tasks      | elapsed:    0.1s
+[Parallel(n_jobs=4)]: Done 192 tasks      | elapsed:    0.3s
+[Parallel(n_jobs=4)]: Done 400 out of 400 | elapsed:    0.5s finished
+[Parallel(n_jobs=4)]: Done  42 tasks      | elapsed:    3.8s
+[Parallel(n_jobs=4)]: Done 192 tasks      | elapsed:   16.7s
+[Parallel(n_jobs=4)]: Done 400 out of 400 | elapsed:   34.8s finished
+[Parallel(n_jobs=4)]: Done  42 tasks      | elapsed:    0.1s
+[Parallel(n_jobs=4)]: Done 192 tasks      | elapsed:    0.3s
+[Parallel(n_jobs=4)]: Done 400 out of 400 | elapsed:    0.6s finished
+[Parallel(n_jobs=4)]: Done  42 tasks      | elapsed:    3.9s
+[Parallel(n_jobs=4)]: Done 192 tasks      | elapsed:   17.0s
+[Parallel(n_jobs=4)]: Done 400 out of 400 | elapsed:   35.0s finished
+[Parallel(n_jobs=4)]: Done  42 tasks      | elapsed:    0.1s
+[Parallel(n_jobs=4)]: Done 192 tasks      | elapsed:    0.3s
+[Parallel(n_jobs=4)]: Done 400 out of 400 | elapsed:    0.5s finished
+[Parallel(n_jobs=4)]: Done  42 tasks      | elapsed:    5.3s
+[Parallel(n_jobs=4)]: Done 192 tasks      | elapsed:   23.4s
+[Parallel(n_jobs=4)]: Done 400 out of 400 | elapsed:   48.5s finished
+[Parallel(n_jobs=4)]: Done  42 tasks      | elapsed:    0.0s
+0.4524489795918367 ----------------Best Accuracy score on Cross Validation Sets
+0.512
+[Parallel(n_jobs=4)]: Done 192 tasks      | elapsed:    0.1s
+[Parallel(n_jobs=4)]: Done 400 out of 400 | elapsed:    0.2s finished
+f = open("Output.txt","w")
+f.write("Best Accuracy score on Cross Validation Sets %f" %classifier.best_score_,)
+f.write("Score on Test Set %f" %classifier.score(X_test,y_test))
+f.close()
+
+[Parallel(n_jobs=4)]: Done  42 tasks      | elapsed:    0.0s
+[Parallel(n_jobs=4)]: Done 192 tasks      | elapsed:    0.1s
+[Parallel(n_jobs=4)]: Done 400 out of 400 | elapsed:    0.2s finished
