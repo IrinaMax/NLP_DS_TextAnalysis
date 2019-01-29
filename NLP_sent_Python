@@ -15,7 +15,7 @@ Created on Wed Nov  7 23:05:55 2018
 
 import os
 os.getcwd()
-os.chdir('/Users/irinamahmudjanova/Documents/STUDY/DATA_SCIENCE/Udemy_DS_NLP_Python1/spambase')
+os.chdir('/Users/irinamahmudjanova/Documents/STUDY/DATA_SCIENCE/spambase')
 # '/Users/irinamahmudjanova'
 
 from __future__ import print_function, division
