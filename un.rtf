@@ -1,0 +1,775 @@
+{\rtf1\ansi\ansicpg1252\cocoartf1671\cocoasubrtf100
+{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\margl1440\margr1440\vieww10800\viewh8400\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 from __future__ import unicode_literals\
+import os\
+import sys\
+import re\
+import pandas as pd\
+import numpy as np\
+import pickle\
+from ast import literal_eval\
+import matplotlib.pyplot as plt\
+from gensim.models.word2vec import Word2Vec\
+from sklearn.metrics import f1_score, classification_report\
+from nltk.stem.snowball import SnowballStemmer \
+from nltk import sent_tokenize, word_tokenize, pos_tag, ne_chunk\
+from nltk.stem import WordNetLemmatizer\
+from nltk.corpus import stopwords\
+from collections import Counter\
+from pyspark.ml.feature import StringIndexer, OneHotEncoder, HashingTF, IDF,Word2Vec, Tokenizer,RegexTokenizer, MinHashLSH,BucketedRandomProjectionLSH, StopWordsRemover, CountVectorizer \
+from pyspark.ml import PipelineModel, Pipeline\
+from pyspark.sql import SparkSession\
+from pyspark.sql.types import IntegerType, StringType, DecimalType,FloatType, DoubleType\
+from pyspark.sql.functions import udf, col, length, concat, lit, array, explode, sum, size, when, unix_timestamp\
+from pyspark.ml.evaluation import MulticlassClassificationEvaluator\
+from pyspark.ml.classification import LogisticRegression, DecisionTreeClassifier, RandomForestClassifier, MultilayerPerceptronClassifier, NaiveBayes,GBTClassifier\
+from sklearn.neighbors import NearestNeighbors\
+import spacy\
+import sparknlp\
+from pyspark.sql import functions as f\
+from sklearn.datasets import make_classification\
+from sklearn.multioutput import MultiOutputClassifier\
+from sklearn.ensemble import RandomForestClassifier\
+from sklearn.utils import shuffle\
+from sklearn.preprocessing import MultiLabelBinarizer\
+from sklearn.preprocessing import LabelEncoder\
+from pyspark.ml.classification import RandomForestClassifier, GBTClassifier, LogisticRegression, OneVsRest, NaiveBayes\
+from pyspark.ml.feature import StringIndexer, IndexToString, StandardScaler, Normalizer, MinMaxScaler, PCA, VectorAssembler\
+from pyspark.mllib.classification import SVMWithSGD , SVMModel\
+from sklearn.feature_extraction.text import TfidfVectorizer\
+from sklearn.preprocessing import LabelEncoder\
+from sklearn.neighbors import KNeighborsClassifier\
+from sklearn.datasets import make_classification\
+from sklearn.multioutput import MultiOutputClassifier\
+from sklearn.ensemble import RandomForestClassifier,GradientBoostingClassifier\
+from sklearn.metrics import classification_report\
+from collections import defaultdict, Counter\
+from sklearn.svm import SVC\
+from sklearn.linear_model import LogisticRegression, Perceptron,SGDClassifier\
+from sklearn.preprocessing import Normalizer, OneHotEncoder\
+from sklearn.naive_bayes import GaussianNB, MultinomialNB, BernoulliNB\
+from sklearn.feature_extraction.text import TfidfVectorizer, HashingVectorizer\
+from sklearn.neural_network import MLPClassifier\
+from  sklearn.decomposition import PCA\
+from sklearn.model_selection import train_test_split\
+\
+#Gigia files\
+#https://ma4-csxp-ldn1005.corp.apple.com:8888/filebrowser/#/user/csaemlp/csiq/datalake/AppleCare/gigafiles/giga_token/streaming/json/2018/09\
+pdf = spark.read.csv('/user/c5064135/Sonar_iLog_Case_12months_wNotes.csv', header=True, encoding='ascii')\
+hadoop = sc._jvm.org.apache.hadoop\
+\
+fs = hadoop.fs.FileSystem\
+conf = hadoop.conf.Configuration() \
+\
+#gigafiles = spark.read.json("/user/csaemlp/csiq/datalake/AppleCare/gigafiles/giga_token/streaming/json/2018/09/*")\
+#gigafiles.printSchema()\
+\
+for col in pdf.columns:\
+    pdf = pdf.withColumnRenamed(col, col.strip())\
+pdf.columns\
+\
+print(pdf.count())\
+pdf = pdf.dropna()\
+print(pdf.count())\
+cols = pdf.columns\
+for c in cols:\
+    pdf = pdf.withColumnRenamed(c,c.strip())\
+cols = ['iLog_Affected_Product', 'iLog_Compnent', 'iLog_Issue', 'iLog_Case_Note'] #  \
+print(cols)\
+#cols = ['iLog_Affected_Product', 'iLog_Compnent'] + cols[11:]\
+\
+#pdf = pdf.orderBy('RTA_Create_Dt')\
+pdf = pdf.distinct()\
+#pdf.repartition(1)\
+print('Number of rows is:', pdf.count())\
+#concat_udf = udf(lambda cols: " ".join([x if x is not None else "*" for x in cols]), StringType())\
+concat_udf = udf(lambda cols: " ".join([x for x in cols]), StringType())\
+pdf = pdf.withColumn('Ilog_Case_Note', concat_udf(array(cols)))\
+pdf = pdf.cache()\
+\
+#starting from here  (4 tables)\
+data1 = spark.read.csv('/user/c5064135/Sonar_iLog_Case_wNote_12months_part1.csv', header=True)\
+data2 = spark.read.csv('/user/c5064135/Sonar_iLog_Case_wNote_12months_part2.csv',header=True) \
+data3 = spark.read.csv('/user/c5064135/Sonar_iLog_Case_wNote_12months_part3.csv',header=True)\
+data_time = spark.read.csv('/user/c5064135/Sonar_iLog_Case_12months.csv',header=True)\
+\
+df = data1.union(data2)\
+df = df.union(data3)\
+\
+print('df.....')\
+df = df.dropna()\
+print(df.count())\
+df = df.dropDuplicates()\
+print(df.count())\
+\
+print('df time stamps...')\
+date_time = data_time.dropna()\
+print(data_time.count())\
+data_time = data_time.dropDuplicates()\
+print(data_time.count())\
+\
+for c in df.columns:\
+    df = df.withColumnRenamed(c, c.strip())\
+for c in data_time.columns:\
+    data_time = data_time.withColumnRenamed(c, c.strip())\
+    \
+data_time = data_time.drop(*['Request_Id', 'RTA_Create_Dt',  'Radar_Id', 'mini_team_name'])\
+\
+df.write.mode('overwrite').option("header", "true").save('/user/c5064135/df123.parquet')\
+data_time.write.mode('overwrite').option("header", "true").save('/user/c5064135/data_time_stamp.parquet')\
+\
+df = spark.read.load('/user/c5064135/df123.parquet', header=True)\
+df_time = spark.read.load('/user/c5064135/data_time_stamp.parquet', header=True)\
+\
+df1, df2 =  df.randomSplit([.5,.5])\
+for t in df1.select('iLog_Case_Note').take(1000):\
+    print(t)\
+    print('==========================================')\
+\
+def filtering(text):\
+    start = text.find('Additional Notes')\
+    end   = text.find('*')\
+    return text[start:end]\
+    \
+_filter_ =  udf(lambda text:filtering(text),StringType())\
+\
+df_time = df_time.withColumnRenamed('iLog_Affected_Product','ILog_Affected_Product').\\\
+                                               withColumnRenamed('iLog_Compnent','Ilog_Component').withColumnRenamed('iLog_Issue','Ilog_Issue')\
+\
+print(df.count())\
+df = df.filter(df.iLog_Case_Note.contains('Additional Notes'))\
+df = df.withColumn('Ilog_Case_Note', _filter_(df.iLog_Case_Note))\
+print('fitered Additional notes....',df.count())\
+\
+df = df.select(['Ilog_Case_Id','Ilog_Case_Note'])\
+df = df.dropDuplicates(subset=['Ilog_Case_Id','Ilog_Case_Note']).dropna()\
+print('Droping Duplicates:', df.count())\
+\
+df_grouped_note = df.groupBy('Ilog_Case_Id').agg(f.concat_ws("- ", f.collect_list(df.Ilog_Case_Note)).alias('Notes'))\
+print('df_grouped_note:',df_grouped_note.count())\
+print('df_time:',df_time.count())\
+df_time = df_time.dropDuplicates(subset=['Ilog_Case_Id', 'RTA_Create_Ts']).dropna()\
+print('df_time drop duplicates:',df_time.count())\
+df_time_grouped_timestamp = df_time.groupby('Ilog_Case_Id').agg(f.max(df_time.RTA_Create_Ts).alias('RTA_Create_Ts'))\
+print('df_time_grouped_timestamp:',df_time_grouped_timestamp.count())\
+\
+df_time_grouped_timestamp_joined = df_time_grouped_timestamp.join(df_time, on=['Ilog_Case_Id', 'RTA_Create_Ts'])\
+df_time_grouped_timestamp_joined  = df_time_grouped_timestamp_joined.dropna()\
+print('df_time_grouped_timestamp_joined:',df_time_grouped_timestamp_joined.count())\
+\
+df_joined = df_grouped_note.join(df_time_grouped_timestamp_joined, on=['Ilog_Case_Id'])\
+df_joined = df_joined.dropna()\
+print(df_joined.count())\
+\
+cols =  ['Notes', 'Ilog_Component', 'Ilog_Issue']\
+concat_udf = udf(lambda cols: " ".join([x if x is not None else "- " for x in cols ]), StringType())\
+df_concat = df_joined.withColumn('final_Notes', concat_udf(array(cols)))\
+df_concat = df_concat.cache()\
+df_concat.write.mode('overwrite').option("header", "true").save('/user/c5064135/df_concat.parquet')\
+\
+df_concat = spark.read.load('/user/c5064135/df_concat.parquet')\
+df_concat = df_concat.select(['Ilog_Case_Id', 'Sonar_Product', 'Sonar_Component', 'Sonar_Issue', 'Sonar_Sub_Issue', 'final_Notes'])\
+\
+df_concat = df_concat.dropna()\
+for t in df_concat.select('final_Notes').rdd.flatMap(lambda s:s).take(200):\
+    print(t)\
+    print('=======================================================================')\
+\
+#pdf = pdf.withColumn('timestamp',unix_timestamp(pdf.RTA_Create_Dt,'yyyy-MM-dd'))\
+#print(pdf.count())\
+#grouped = pdf.groupBy('Ilog_Case_Id').agg( f.max(pdf.timestamp).alias('timestamp') )\
+#print('grouped: ', grouped.count())\
+#pdf_joined = pdf.join(grouped, on =['Ilog_Case_Id', 'timestamp'])\
+#print(pdf_joined.count())\
+\
+pdf.select(['Ilog_Case_Id','RTA_Create_Dt','Sonar_Product', 'Sonar_Component', 'Sonar_Issue']).orderBy(['Ilog_Case_Id','RTA_Create_Dt'], Ascending=False).show(1000,truncate=False)\
+\
+pdf_grouped_note = pdf.groupBy('Ilog_Case_Id').agg(f.concat_ws("***", f.collect_list(pdf.Ilog_Case_Note)).alias('Notes'))\
+#pdf_grouped_timestamp = pdf.groupby('Ilog_Case_Id').agg(f.max(pdf.timestamp).alias('max_timestamp'))\
+pdf_unique = pdf.dropDuplicates(subset=['Ilog_Case_Id'])\
+pdf = pdf_unique.join(pdf_grouped_note, on=['Ilog_Case_Id'])\
+pdf = pdf.withColumn('Ilog_Case_Note', pdf.Notes)\
+\
+keywords =['apple','customer','support','consultation','configuration','issue','resolution','refered to', 'additional','caller','email','import','transfer','probing','additional','notes','affected product','affected','quick', 'case','id','request type' ,'phone','reason','notes:','additional notes','call']\
+stop_w = list(set(stopwords.words('english'))) + keywords\
+stemmer = SnowballStemmer('english')\
+\
+def _remove_name_entities_nltk(text):\
+    text = text.encode('ascii', 'ignore').decode('ascii') \
+    entities = []\
+    for sentence in sent_tokenize(text):\
+        chunks = ne_chunk(pos_tag(word_tokenize(sentence)))\
+        entities.extend([chunk for chunk in chunks if hasattr(chunk,'label')])\
+    ent = set([v[0] for k in entities for v in k])\
+    for w in ent:\
+        text = text.replace(w,'')\
+    return text\
+\
+_remove_slash_ = udf(lambda text: text.replace('/',' '),StringType())\
+_remove_email_ =udf(lambda text: re.sub(r'\\S*@\\S*\\s?', '', text), StringType())\
+_remove_phone_ = udf(lambda text: re.sub(r'(\\d\{3\}[-\\.\\s]??\\d\{3\}[-\\.\\s]??\\d\{4\}|\\(\\d\{3\}\\)\\s*\\d\{3\}[-\\.\\s]??\\d\{4\}|\\d\{3\}[-\\.\\s]??\\d\{4\})', '', text),StringType()) \
+_remove_url_ = udf(lambda text: re.sub(r'\\w+:\\/\{2\}[\\d\\w-]+(\\.[\\d\\w-]+)*(?:(?:\\/[^\\s/]*))*', '', text),StringType()) \
+_remove_com_ = udf(lambda text: ' '.join([w for w in word_tokenize(text) if not '.com' in w]), StringType()) \
+_remove_names_nltk_ = udf(lambda text: _remove_name_entities_nltk(text),StringType())\
+#_remove_names_spacy = udf(lambda text: _remove_name_entities_spacy(text),StringType())\
+_lower_remove_stop_w_ = udf(lambda text: ' '.join([w.lower() for w in word_tokenize(text) if w.lower() not in stop_w]),StringType())\
+_remove_numbers_ = udf(lambda text: re.sub(r'[0-9]+', '', text),StringType())\
+_remove_punc_ = udf(lambda text: re.sub(r'[^\\w\\s]', '', text), StringType()) \
+_stemming_snowball_ = udf(lambda text: ' '.join([stemmer.stem(w) for w in word_tokenize(text)]), StringType())\
+#_lemmatizing_ = udf(lambda text: ' '.join([lemmatizer.lemmatize(w) for w in word_tokenize(text)]), StringType())\
+#_remove_char_ = udf(lambda text: ' '.join([w for w in word_tokenize(text) if len(w)>1]), StringType()) \
+#_discrete_labels_ = udf(lambda text: 0 if 'PF' in text else 1, IntegerType())\
+\
+def count_freq(text):\
+    return Counter(text)\
+\
+_remove_low_freq_ = udf(lambda text: ' '.join([w for w in word_tokenize(text) if dic[w] > 5]), StringType()) \
+\
+pip_path = 'hdfs://ma4-csxp-ldn1001.corp.apple.com:8020/user/csaesbp/TriggerUseCase2/pipline_model_multi_label'\
+dic_df_path = 'hdfs://ma4-csxp-ldn1001.corp.apple.com:8020/user/csaesbp/TriggerUseCase2/dic_model_multi_label.parquet'\
+final_list_of_words = 'hdfs://ma4-csxp-ldn1001.corp.apple.com:8020/user/csaesbp/TriggerUseCase2/final_list_of_words.parquet'\
+\
+def dc_fe(piplin_path= pip_path, phase='training'):\
+    #df = df.withColumn('Note_cleaned', _remove_slash_(df.final_Notes))\
+    #df = df.withColumn('Note_cleaned', _remove_email_(df.Note_cleaned))\
+    #df = df.withColumn('Note_cleaned', _remove_phone_(df.Note_cleaned))\
+    #df = df.withColumn('Note_cleaned', _remove_url_(df.Note_cleaned))\
+    #df = df.withColumn('Note_cleaned', _remove_com_(df.Note_cleaned))\
+    #df = df.withColumn('Note_cleaned', _remove_names_nltk_(df.Note_cleaned))\
+    #df = df.withColumn('Note_cleaned', _lower_remove_stop_w_(df.Note_cleaned))\
+    #df = df.withColumn('Note_cleaned', _remove_punc_(df.Note_cleaned))\
+    #df = df.withColumn('Note_cleaned', _stemming_snowball_(df.Note_cleaned))\
+    \
+    #df.write.mode('overwrite').save('hdfs://ma4-csxp-ldn1001.corp.apple.com:8020/user/csaesbp/TriggerUseCase2/df_cleaned')\
+    #words = df.withColumn('words', f.explode(f.split(f.col('Note_cleaned'), ' '))).select('words')\
+    #words.write.mode('overwrite').save(dic_df_path)\
+    print(1000)\
+    \
+    df = spark.read.load('hdfs://ma4-csxp-ldn1001.corp.apple.com:8020/user/csaesbp/TriggerUseCase2/df_cleaned')\
+    df.cache()\
+    words = spark.read.load(dic_df_path)\
+    print(1500)\
+\
+    list_of_words = words.rdd.flatMap(lambda x:x).collect()\
+    dict_of_words = Counter(list_of_words)\
+\
+    \
+    final_list = [k.strip() for k,v in dict_of_words.items() if v > 5]\
+    \
+    df_dict = spark.createDataFrame([final_list],StringType())\
+    df_dict.write.mode('overwrite').save(final_list_of_words)\
+    \
+    df_dict = spark.read.load(final_list_of_words)\
+    dict_of_words =df_dict.rdd.flatMap(lambda s:s).collect()[0].split(',')\
+    #final_dict_of_words = [w.strip() for w in dict_of_words]\
+\
+    print(2000)\
+    \
+    _remove_low_freq_ = udf(lambda text:' '.join([w for w in text.split() if w in dict_of_words]), StringType()) \
+    df = df.withColumn('Note_cleaned_new', _remove_low_freq_(df.Note_cleaned))\
+    print(3000)\
+\
+    tokenizer =[Tokenizer(inputCol='Note_cleaned', outputCol='tokenized')]\
+\
+    #remover = [StopWordsRemover(inputCol='tokenized', outputCol="filtered")]\
+    word2vec  = [Word2Vec(vectorSize=300, inputCol='tokenized',outputCol='w2v')]\
+  \
+    cv = [CountVectorizer(inputCol='tokenized', outputCol='count_vect',minDF=5)]\
+\
+    TFIDF = [IDF(inputCol='count_vect', outputCol='tf_idf')]\
+\
+    \
+    #cat_features    = ['iLog_Affected_Product', 'iLog_Compnent', 'iLog_Issue']\
+    #stringindexer   = [StringIndexer(inputCol=c, outputCol='stringindexed_' + c, handleInvalid='skip') for c in cat_features]\
+    #onehotencoder   = [OneHotEncoder(inputCol='stringindexed_' + c, outputCol='onehotencoded_' + c) for c in cat_features]\
+\
+    piplin  = Pipeline(stages=tokenizer+word2vec+cv+TFIDF) \
+    if phase == 'training':\
+        print('training...')\
+        pip = piplin.fit(df)\
+        pip.write().overwrite().save(piplin_path)\
+    else:\
+        pip = PipelineModel.load(piplin_path) \
+    df = pip.transform(df)\
+    df = df.drop(*['tokenized','count_vect'])\
+    return df\
+\
+dict = spark.read.load(final_list_of_words).rdd.flatMap(lambda s:s).collect()[0].split(',')\
+\
+df_concat.cache()\
+data = dc_fe(phase='training')\
+\
+data.cache()\
+data.write.format("parquet").mode("overwrite").option("header", "true").save('hdfs://ma4-csxp-ldn1001.corp.apple.com:8020/user/csaesbp/TriggerUseCase2/data_multi_label_aggregated.parquet')\
+#data.repartition(1).write.format("parquet").mode("overwrite").option("header", "true").save('hdfs://ma4-csxp-ldn1001.corp.apple.com:8020/user/csaesbp/TriggerUseCase2/data_multi_label.parquet')\
+\
+data = spark.read.load('hdfs://ma4-csxp-ldn1001.corp.apple.com:8020/user/csaesbp/TriggerUseCase2/data_multi_label_aggregated.parquet')\
+\
+data.select(['final_Notes', 'Note_cleaned_new']).show(3,truncate=False)\
+\
+data_sum.select('sum').agg( f.max(data_sum.sum)  ).show()\
+\
+print(data.columns)\
+sum_ = udf(lambda s:float(s.values.sum()), DoubleType())\
+data_sum = data.withColumn('sum', sum_(col('tf_idf')))\
+data_filter = data_sum.filter(col('sum')>=50)\
+\
+data_filter.count()\
+\
+print(data.count())\
+print(data_filter.count())\
+\
+data_filter.write.format("parquet").mode("overwrite").option("header", "true").save('hdfs://ma4-csxp-ldn1001.corp.apple.com:8020/user/csaesbp/TriggerUseCase2/data_multi_label_filterd.parquet')\
+\
+data_filter = spark.read.load('hdfs://ma4-csxp-ldn1001.corp.apple.com:8020/user/csaesbp/TriggerUseCase2/data_multi_label_filterd.parquet')\
+#data = spark.read.load('hdfs://ma4-csxp-ldn1001.corp.apple.com:8020/user/csaesbp/TriggerUseCase2/data_multi_label.parquet')\
+\
+data_filter.select(['Ilog_Case_Id','final_Notes','w2v', 'tf_idf']).write.format("parquet").mode("overwrite").option("header", "true").save('hdfs://ma4-csxp-ldn1001.corp.apple.com:8020/user/csaesbp/TriggerUseCase2/RTA.parquet')\
+\
+RTA_data = spark.read.load('hdfs://ma4-csxp-ldn1001.corp.apple.com:8020/user/csaesbp/TriggerUseCase2/RTA.parquet')\
+\
+data_filter.show()\
+%pyspark\
+data_filter.select(['Sonar_Product', 'Sonar_Component', 'Sonar_Issue', 'Sonar_Sub_Issue']).show(1000,truncate=False)\
+\
+model_2 = models.transform(rta)\
+#result = model_2.groupBy('prediction').count().show()\
+filter = model_2.filter('prediction==1')\
+filter.show()\
+\
+_remove_replace_ = udf(lambda s:s.strip().lower().replace('_old',''), StringType())\
+data_filter = data_filter.withColumn('Sonar_Product', _remove_punc_(data_filter.Sonar_Product))\
+data_filter = data_filter.withColumn('Sonar_Product', _remove_replace_(data_filter.Sonar_Product))\
+data_filter = data_filter.withColumn('Sonar_Product', _remove_numbers_(data_filter.Sonar_Product))\
+\
+data_filter = data_filter.withColumn('Sonar_Component', _remove_punc_(data_filter.Sonar_Component))\
+data_filter = data_filter.withColumn('Sonar_Component', _remove_replace_(data_filter.Sonar_Component))\
+data_filter = data_filter.withColumn('Sonar_Component', _remove_numbers_(data_filter.Sonar_Component))\
+\
+data_filter = data_filter.withColumn('Sonar_Issue', _remove_punc_(data_filter.Sonar_Issue))\
+data_filter = data_filter.withColumn('Sonar_Issue', _remove_replace_(data_filter.Sonar_Issue))\
+data_filter = data_filter.withColumn('Sonar_Issue', _remove_numbers_(data_filter.Sonar_Issue))\
+\
+data_filter = data_filter.withColumn('Sonar_Sub_Issue', _remove_punc_(data_filter.Sonar_Sub_Issue))\
+data_filter = data_filter.withColumn('Sonar_Sub_Issue', _remove_replace_(data_filter.Sonar_Sub_Issue))\
+data_filter = data_filter.withColumn('Sonar_Sub_Issue', _remove_numbers_(data_filter.Sonar_Sub_Issue))\
+\
+data_filter.select(['Sonar_Product', 'Sonar_Component', 'Sonar_Issue', 'Sonar_Sub_Issue']).show(2000,truncate=False)\
+\
+cols = ['Sonar_Product', 'Sonar_Component', 'Sonar_Issue', 'Sonar_Sub_Issue']\
+concat_ =  udf(lambda cols: '__'.join([c for c in cols]))\
+data_filter = data_filter.withColumn("label",concat_(array(cols)))\
+data_filter = data_filter.filter("Sonar_Product !=''")\
+\
+data_filter.select('label').show(truncate=False)\
+\
+input_col =['Note_cleaned_new','w2v', 'tf_idf','label']\
+final_data = data_filter.select(*input_col)\
+final_data.write.format("parquet").mode("overwrite").option("header", "true").save('hdfs://ma4-csxp-ldn1001.corp.apple.com:8020/user/csaesbp/TriggerUseCase2/final_data_multi_label_svm.parquet')\
+#final_data.repartition(1).write.format("parquet").mode("overwrite").option("header", "true").save('hdfs://ma4-csxp-ldn1001.corp.apple.com:8020/user/csaesbp/TriggerUseCase2/final_data_multi_label.parquet')\
+\
+final_data = spark.read.load('hdfs://ma4-csxp-ldn1001.corp.apple.com:8020/user/csaesbp/TriggerUseCase2/final_data_multi_label_svm.parquet')\
+#final_data = spark.read.load('hdfs://ma4-csxp-ldn1001.corp.apple.com:8020/user/csaesbp/TriggerUseCase2/final_data_multi_label.parquet')\
+\
+label = final_data.groupBy('label').count().filter('count > 20').select('label').rdd.flatMap(lambda s:s).collect()\
+final_data = final_data.filter(final_data.label.isin(label))\
+\
+print(final_data.count())\
+padf = final_data.dropna()\
+padf = padf.toPandas()\
+################################### I finnished here\
+\
+\
+\
+\
+features = np.array([row for row in padf['w2v'].values])\
+\
+labels = padf['label']\
+x_train, x_test, y_train, y_test = train_test_split(features, labels, test_size=0.3)\
+\
+%pyspark\
+le =  LabelEncoder().fit(padf['label'])\
+padf['labels_encoded'] = le.transform(padf['label'])\
+\
+%pyspark\
+#clf = RandomForestClassifier(n_estimators=100,random_state=1)\
+#clf = KNeighborsClassifier(1)\
+#clf = GradientBoostingClassifier(n_estimators=1000)\
+#clf = SVC(kernel='linear',C=1, cache_size=1000) #best result with c=100, scaling, \
+#clf = SVC(kernel='rbf',C=100, gamma=0.01)\
+clf = SGDClassifier(loss="hinge", penalty="l2", n_iter=20,n_jobs=-1,warm_start=True,average=True)\
+#clf = LatentDirichletAllocation()\
+#clf =  PassiveAggressiveClassifier(loss='squared_hinge',C=1.0, tol=1e-4)\
+#clf = LogisticRegression(warm_start=True,)\
+#clf = MultinomialNB()\
+#clf = GaussianNB()\
+#clf = BernoulliNB()   #not good result\
+#clf = AdaBoostClassifier()\
+#clf = Perceptron(random_state=1,fit_intercept=False, n_iter=5,warm_start=True)\
+#clf = GaussianProcessClassifier(random_state=1)\
+#clf = MLPClassifier()\
+#clf = AdaBoostClassifier()\
+clf.fit(x_train, y_train)\
+y_pred = clf.predict(x_test)\
+print(np.mean(y_test==y_pred))\
+for y1,y2 in zip(y_test, y_pred):\
+    if y1 != y2:\
+        print(y1)\
+        print(y2)\
+        print('=======================')\
+\
+normalizer = Normalizer().fit(x_train)\
+x_train = normalizer.transform(x_train)\
+x_test = normalizer.transform(x_test)\
+\
+pca = PCA(2).fit(x_train)\
+x_train = pca.transform(x_train)\
+x_test = pca.transform(x_test)\
+\
+#clf = RandomForestClassifier(n_estimators=20)\
+#clf = KNeighborsClassifier(1)\
+#clf = GradientBoostingClassifier()\
+#clf = SVC(kernel='linear',C=100, cache_size=1000) #best result with c=100, scaling, \
+#clf = SVC(kernel='rbf',C=100)\
+#clf = LogisticRegression()\
+#clf = MultinomialNB()\
+#clf = BernoulliNB()\
+clf = Perceptron(random_state=2,fit_intercept=False, n_iter=20,warm_start=True)\
+#clf = MLPClassifier()\
+clf.fit(x_train, y_train)\
+\
+y_pred = clf.predict(x_test)\
+\
+print(np.mean(y_test==y_pred))\
+\
+y_pred_reversed = le.inverse_transform(y_pred.tolist())\
+y_test_reversed = le.inverse_transform(y_test.tolist())\
+\
+#60 percent concatenating the data\
+for y1,y2 in zip(y_test_reversed, y_pred_reversed):\
+    if y1 != y2:\
+        print(y1,'  ==========  ', y2)\
+\
+print(classification_report(y_test,y_pred))\
+\
+selected_features = ['tf_idf','onehotencoded_iLog_Affected_Product',  'onehotencoded_iLog_Compnent', 'onehotencoded_iLog_Issue']\
+assembler = VectorAssembler(inputCols=selected_features, outputCol='features')\
+\
+layers = [5, 5,5, 5]\
+\
+labelIndexer = StringIndexer(inputCol='labels',outputCol='indexedLabel').fit(final_data)\
+#normalizer = Normalizer(inputCol ='w2v',outputCol='normalized')\
+normalizer = StandardScaler(inputCol='w2v',outputCol='normalized', withStd=True, withMean=True)\
+#normalizer = MinMaxScaler(inputCol='w2v',outputCol='normalized')\
+#pca = PCA(k=2,inputCol='normalized',outputCol='reducedDim')\
+(trainingData, testData) = final_data.randomSplit([0.9, 0.1])\
+\
+#rf = RandomForestClassifier(labelCol="indexedLabel", featuresCol="features", numTrees=20)\
+#rf = DecisionTreeClassifier(labelCol="indexedLabel", featuresCol="features")\
+#rf = MultilayerPerceptronClassifier(labelCol="indexedLabel", featuresCol="normalized",maxIter=100)\
+#rf = GBTClassifier(labelCol="indexedLabel", featuresCol="normalized")\
+rf = LogisticRegression(labelCol="indexedLabel", featuresCol="features")\
+#rf = NaiveBayes(smoothing=1.0, modelType="multinomial",labelCol="indexedLabel", featuresCol="features")\
+ovr = OneVsRest(classifier=rf)\
+\
+labelConverter = IndexToString(inputCol="prediction", outputCol="predictedLabel",\
+                               labels=labelIndexer.labels)\
+\
+import pyspark\
+pyspark.__version__\
+\
+pipeline = Pipeline(stages=[assembler, labelIndexer, rf, labelConverter])  #normalizer\
+\
+# Train model.  This also runs the indexers.\
+# Make predictions.\
+model = pipeline.fit(trainingData)\
+predictions = model.transform(testData)\
+\
+# Select example rows to display.\
+#predictions.select("predictedLabel", "label").show(5)\
+\
+# Select (prediction, true label) and compute test error\
+evaluator = MulticlassClassificationEvaluator(\
+    labelCol="indexedLabel", predictionCol="prediction", metricName="accuracy")\
+accuracy = evaluator.evaluate(predictions)\
+print("Test Error = %g" % (1.0 - accuracy))\
+\
+rfModel = model.stages[2]\
+\
+#Naivebays with tfidf cate==>43 error\
+#Naivebays with tfidf and other 3 cate==>45 error\
+\
+result = predictions.select("predictedLabel", "labels").colllect()\
+\
+pipeline = Pipeline(stages=[labelIndexer, normalizer,pca])\
+predictions = pipeline.fit(final_data).transform(final_data)\
+\
+from pyspark.ml.classification import LinearSVC\
+LSVC = LinearSVC()\
+ovr = OneVsRest(classifier=LSVC)\
+\
+predictions = predictions.withColumnRenamed('indexedlabel','label').withColumnRenamed('reducedDim','features')\
+print(predictions.columns)\
+train, test =  predictions.randomSplit([0.8,0.2])\
+model = ovr.fit(train)\
+results = model.transform(test)\
+\
+evaluator = MulticlassClassificationEvaluator(labelCol="indexedLabel", predictionCol="prediction", metricName="accuracy")\
+accuracy = evaluator.evaluate(predictions)\
+print("Test Error = %g" % (1.0 - accuracy))\
+\
+print(len(np.unique(predictions.select('indexedLabel').rdd.flatMap(lambda x:x).collect() ) ) )\
+\
+print(len(np.unique(predictions.select('prediction').rdd.flatMap(lambda x:x).collect() ) ) )\
+\
+print(len(np.unique(predictions.select('indexedLabel').rdd.flatMap(lambda x:x).collect()))\
+\
+predictions.select(['labels', 'indexedLabel', 'rawPrediction', 'prediction', 'predictedLabel']).show(2000)\
+\
+predictions.select(['labels','predictedLabel']).show(3000,truncate=False)\
+\
+final_data.columns\
+\
+from pyspark.mllib.regression import LabeledPoint\
+from pyspark.mllib.linalg import Vector as MLLibVector, Vectors as MLLibVectors\
+x_train = predictions.select('w2v').rdd\
+y_train = predictions.select('indexedLabel').rdd\
+train, test = predictions.select(['w2v','indexedLabel']).randomSplit([.9,.1])\
+#train, test = train.rdd, test.rdd\
+\
+#test_set = test.rdd.map(lambda row:LabeledPoint(row.indexedLabel,MLLibVectors.fromML(row.w2v)))\
+test_set = test.rdd.map(lambda row:LabeledPoint(row.indexedLabel,MLLibVectors.dense( row.w2v.toArray() )))\
+#test_set = test.rdd.map(lambda row:LabeledPoint(row[1],row[0]))\
+\
+data = [LabeledPoint(0.0, [4.6,3.6,1.0,0.2]), # 3 classes, labeled 1, 2, 3\
+        LabeledPoint(0.0, [5.7,4.4,1.5,0.4]),\
+        LabeledPoint(1.0, [6.7,3.1,4.4,1.4]),\
+        LabeledPoint(0.0, [4.8,3.4,1.6,0.2]),\
+        LabeledPoint(1.0, [4.4,3.2,1.3,0.2])]\
+\
+test_set = sc.parallelize(data)\
+\
+svm = SVMModel.train(test_set, iterations=2)\
+\
+from pyspark.mllib.linalg import Matrix, Matrices\
+import pyspark.sql.functions as f\
+from pyspark.ml.linalg import DenseVector, SparseVector\
+summation = udf(lambda x: f.sum(x.dense()))\
+#data = data.withColumn('tf_udf_sum', summation(col('tf_idf')))\
+data.show()\
+\
+from pyspark.ml.linalg import VectorUDT\
+from pyspark.mllib.linalg import Vectors as MLLibVectors\
+f = udf(lambda x:MLLibVectors.sparse(x))\
+data = data.withColumn('tf_idf_asml', f(col('tf_idf')))\
+as_ml = udf(lambda v: v.asML() if v is not None else None, VectorUDT())\
+result = data.withColumn("tf_idf_new", as_ml("tf_idf_asml"))\
+\
+padf['Sonar_Product_new'] = LabelEncoder().fit(padf['Sonar_Product']).transform(padf['Sonar_Product'])\
+padf['Sonar_Component_new'] = LabelEncoder().fit(padf['Sonar_Component']).transform(padf['Sonar_Component'])\
+padf['Sonar_Issue_new'] = LabelEncoder().fit(padf['Sonar_Issue']).transform(padf['Sonar_Issue'])\
+padf['Sonar_Sub_Issue_new'] = LabelEncoder().fit(padf['Sonar_Sub_Issue']).transform(padf['Sonar_Sub_Issue'])\
+\
+\
+print(len(set(padf['Sonar_Product_new'])))\
+print(len(set(padf['Sonar_Component_new'])))\
+print(len(set(padf['Sonar_Issue_new'])))\
+print(len(set(padf['Sonar_Sub_Issue_new'])))\
+\
+idx = int(len(padf)*.999)\
+train_set, test_set = padf.iloc[:idx,:], padf.iloc[idx:,:]\
+\
+x_train, x_test = train_set['w2v_Note_Desc'],test_set['w2v_Note_Desc']\
+y_train, y_test = train_set[['Sonar_Product_new', 'Sonar_Component_new','Sonar_Issue_new','Sonar_Sub_Issue_new']],test_set[['Sonar_Product_new', 'Sonar_Component_new','Sonar_Issue_new','Sonar_Sub_Issue_new']]\
+\
+x_train = np.array(x_train.values.tolist())\
+x_test = np.array(x_test.values.tolist())\
+\
+print(x_train.shape,y_train.shape, x_test.shape, y_test.shape)\
+\
+import pyspark.sql.functions as f\
+data = data.withColumn('wordCount', f.size(f.col('filtered')))\
+print(data.count())\
+data = data.filter(data.wordCount<=15)\
+print(data.count())\
+\
+data.select('Note_Desc').show(1000, truncate=False)\
+\
+low_info = data.select('tf_idf').rdd.flatMap(lambda x:x).take(1000)\
+\
+for d in low_info:\
+    print(np.sum(d))\
+\
+temp = data.select('tf_idf').first()\
+\
+high_data = data\
+low_data = data\
+\
+d1 = high_data.select('tf_idf').rdd.flatMap(lambda x:x).take(300)\
+\
+for d in d1:\
+    print(sum(d.values))\
+\
+d2 = low_data.select('tf_idf').rdd.flatMap(lambda x:x).take(300)\
+\
+for d in d2:\
+    print(d.values)\
+\
+\
+pydf = data.select(['Ilog_Case_Id','Note_Desc',"w2v_Note_Desc"])\
+\
+pydf.repartition(1).write.format("parquet").mode("overwrite").option("header", "true").save('hdfs://ma4-csxp-ldn1001.corp.apple.com:8020/user/csaesbp/TriggerUseCase2/pydf_final')\
+pydf = spark.read.load('hdfs://ma4-csxp-ldn1001.corp.apple.com:8020/user/csaesbp/TriggerUseCase2/pydf_final')\
+\
+pydf = data\
+tr, ts = pydf.randomSplit([.9995,.005])\
+\
+ts.select('Note_Desc').show(1000, truncate=False)\
+\
+ts_new = ts.select(['w2v_Note_Desc','Note_Desc', 'tf_idf']).rdd.flatMap(lambda x:x).collect()\
+\
+ts_new[1]\
+\
+def find_NN(tr, ts, T):\
+        #tr_set = np.array([row for row in train_set.loc[:,'TFIDF_Note_Desc']])\
+        \
+        dt1 = 0\
+        dt2 = 0\
+        dfA = tr\
+\
+        mh = BucketedRandomProjectionLSH(inputCol="w2v_Note_Desc", outputCol="hashes",seed=1, bucketLength=1.0)\
+        model = mh.fit(dfA)\
+        model.transform(dfA)\
+        print("The hashed dataset where hashed values are stored in the column 'hashes':")\
+        \
+        \
+        ts_new = ts.select(['w2v_Note_Desc','Note_Desc', 'tf_idf']).rdd.flatMap(lambda x:x).collect()\
+        \
+        for i in range(len(ts_new)):\
+            idx = i+1\
+            if idx % 3 == 0:\
+                info = np.sum(ts_new[idx-1])\
+                if info < 60:\
+                    print('LOW_INFO:',info)\
+                    print(ts_new[idx-2])\
+                else:\
+                    key = ts_new[idx-3]\
+                    \
+                    pred = model.approxNearestNeighbors(dfA, key, 1)\
+                    dis = pred.select('distCol').rdd.flatMap(lambda x:x).take(1)[0]\
+                \
+                    if dis < T:\
+                        dt1 += 1\
+                        #print('\\n',dis)\
+                        #print(ts_new[idx-2])\
+                        #print()\
+                        #print(pred.select('Note_Desc').rdd.flatMap(lambda x:x).take(1))\
+                        #print('====================================')\
+                    else:\
+                        dt2 += 1\
+                        print('\\n',dis)\
+                        print(ts_new[idx-2])\
+                        print()\
+                        print(pred.select('Note_Desc').rdd.flatMap(lambda x:x).take(1))\
+                        print('=================================')\
+            if i % 50 == 0:\
+                print(dt1, dt2)\
+        print(dt1, dt2)\
+\
+find_NN(tr, ts, T=.4)\
+\
+df = pdf.toPandas()\
+\
+cols = df.columns\
+df.columns = [c.strip() for c in cols]\
+\
+df['labels'] = df['Sonar_Product'].astype(str)+'***'+df['Sonar_Component'].astype(str)+'***'+df['Sonar_Issue'].astype(str) #+padf['Sonar_Sub_Issue']\
+df['labels'] = df['labels'].apply(lambda x:x.replace('Authenticati_OLD','Authentication').replace('Apple ID_OLD','Apple ID').replace('Security_OLD','Security').replace('Email_Address_OLD','Email_Address').replace('Authenticati_OLD','Authentication').replace('website_OLD','website').replace(' ','_').replace('\\"','').replace('-',''))\
+df.loc[:,u'iLog_Case_Note'] = ' '+df.loc[:,u'iLog_Case_Note']+' '\
+df_grouped = df[['Ilog_Case_Id',u'iLog_Case_Note']].groupby('Ilog_Case_Id', as_index=False)[[u'iLog_Case_Note']].sum().sort_values(by='Ilog_Case_Id')\
+df_uniq_case_ids = df.drop_duplicates(subset=u'Ilog_Case_Id')\
+df_joined = df_uniq_case_ids.merge(df_grouped,on=u'Ilog_Case_Id')\
+df_joined = df_joined.rename(columns=\{'iLog_Case_Note_x':'iLog_Case_Note'\})\
+df_joined.drop([u'Request_Id', u'Radar_Id', u'mini_team_name',u'Sonar_Product', u'Sonar_Component', u'Sonar_Issue',u'Sonar_Sub_Issue', u'iLog_Case_Note_y'],axis=1,inplace=True)\
+df_joined.loc[:,'Notes'] = df_joined.loc[:,u'iLog_Affected_Product']+ ' '+df_joined.loc[:,u'iLog_Compnent']+' '+df_joined.loc[:,u'iLog_Issue']+' '+df_joined.loc[:,u'iLog_Case_Note']+' '\
+df_final = df_joined\
+df_final.drop(u'iLog_Case_Note', axis=1, inplace=True)\
+df_final.columns\
+\
+affprod_le = LabelEncoder().fit(df_final[u'iLog_Affected_Product'])\
+compoprod_le = LabelEncoder().fit(df_final[u'iLog_Compnent'])\
+issu_le = LabelEncoder().fit(df_final[u'iLog_Issue'])\
+\
+df_final.loc[:,'affprod_label_encoded'] = affprod_le.transform(df_final[u'iLog_Affected_Product']) \
+df_final.loc[:,'compoprod_label_encoded'] = compoprod_le.transform(df_final['iLog_Compnent']) \
+df_final.loc[:,'issu_label_encoded'] = issu_le.transform(df_final[u'iLog_Issue']) \
+stop_w = stopwords.words('english')\
+\
+def _remove_name_entities_(text):\
+    entities = []\
+    for sentence in sent_tokenize(text):\
+        chunks = ne_chunk(pos_tag(word_tokenize(sentence)))\
+        entities.extend([chunk for chunk in chunks if hasattr(chunk,'label')])\
+    ent = set([v[0] for k in entities for v in k])\
+    for w in ent:\
+        text = text.replace(w,"")\
+    return text\
+\
+stemmer = SnowballStemmer('english')\
+_remove_email_ = (lambda text: re.sub(r'\\S*@\\S*\\s?', '', text))\
+_remove_phone_ = (lambda text: re.sub(r'(\\d\{3\}[-\\.\\s]??\\d\{3\}[-\\.\\s]??\\d\{4\}|\\(\\d\{3\}\\)\\s*\\d\{3\}[-\\.\\s]??\\d\{4\}|\\d\{3\}[-\\.\\s]??\\d\{4\})', '', text)) \
+_remove_url_   = (lambda text: re.sub(r'\\w+:\\/\{2\}[\\d\\w-]+(\\.[\\d\\w-]+)*(?:(?:\\/[^\\s/]*))*', '', text)) \
+_lower_remove_stop_w_ = (lambda text: ' '.join([w.lower() for w in word_tokenize(text) if w.lower() not in stop_w]))\
+_remove_numbers_ = (lambda text: re.sub(r'[0-9]+', '', text))\
+_remove_punc_  = (lambda text: re.sub(r'[^\\w\\s]', '', text)) \
+_stemming_snowball_ = (lambda text: ' '.join([stemmer.stem(w) for w in text.split()]))\
+_remove_char_  = (lambda text: ' '.join([w for w in text.split() if len(w)>1]))\
+#_count_freq_ = (lambda text: Counter(text.split()))\
+\
+df_final[u'iLog_Case_Note'] = df_final[u'Notes'].apply(_remove_email_)\
+df_final[u'iLog_Case_Note'] = df_final[u'iLog_Case_Note'].apply(_remove_phone_)\
+df[u'iLog_Case_Note'] = df[u'iLog_Case_Note'].apply(_remove_punc_ )\
+df[u'iLog_Case_Note'] = df[u'iLog_Case_Note'].apply(_stemming_snowball_)\
+\
+affprod_le = OneHotEncoder(categories='auto').fit(df_final['affprod_label_encoded'].values.reshape(-1,1))\
+compoprod_le = OneHotEncoder().fit(df_final['compoprod_label_encoded'].values.reshape(-1,1))\
+issu_le = OneHotEncoder().fit(df_final['issu_label_encoded'].values.reshape(-1,1))\
+\
+affprod_ohe = affprod_le.transform(df_final['affprod_label_encoded'].values.reshape(-1,1))\
+compoprod_ohe = compoprod_le.transform(df_final['compoprod_label_encoded'].values.reshape(-1,1))\
+issu_ohe = issu_le.transform(df_final['issu_label_encoded'].values.reshape(-1,1))\
+\
+vectorizer = TfidfVectorizer(stop_words = \{'english'\})\
+tfidf = vectorizer.fit_transform(df[u'iLog_Case_Note'].values.tolist())\
+\
+le = LabelEncoder().fit(df_final['labels'])\
+df_final['labels_encoded'] = le.transform(df_final['labels'])\
+\
+idx = int(len(df_final)*.9)\
+x_train, x_test = tfidf[:idx], tfidf[idx:]\
+labels = df_final['labels_encoded']\
+y_train, y_test = labels[:idx], labels[idx:]\
+\
+#clf = RandomForestClassifier(n_estimators=10)\
+#clf = KNeighborsClassifier(1)\
+#clf = GradientBoostingClassifier()\
+#clf = SVC(kernel='linear',C=100, cache_size=1000) #best result with c=100, scaling, \
+#clf = SVC(kernel='rbf',C=100)\
+#clf = LogisticRegression(warm_start=True,solver='saga')\
+#clf = MultinomialNB()\
+#clf = GaussianNB()\
+#clf = BernoulliNB()   #not good result\
+#clf = AdaBoostClassifier()\
+clf = Perceptron(random_state=1,fit_intercept=False, n_iter=10,warm_start=True)\
+#clf = GaussianProcessClassifier(random_state=1)\
+#clf = MLPClassifier()\
+clf.fit(x_train, y_train)\
+\
+data_time.filter(col('Ilog_Case_Id')==100315063885.).show()\
+\
+}
